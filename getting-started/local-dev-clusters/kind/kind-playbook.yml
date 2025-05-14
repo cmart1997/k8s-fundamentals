@@ -1,0 +1,144 @@
+---
+- name: Provision Kind cluster on macOS & Linux
+  hosts: local
+  connection: local
+  gather_facts: yes
+  become: yes                        # only root for installs & service management
+
+  vars:
+    cluster_name: dev
+    k8s_version: v1.30.0
+    api_host_port: 6443
+    kind_version: v0.23.0
+    kind_path: /usr/local/bin/kind
+
+  pre_tasks:
+    - name: Verify Python3 is present
+      command: python3 --version
+      changed_when: false
+
+  tasks:
+    # ───────────────────────────────────────────────────────────────────
+    # 1. Install Docker / start service (root)
+    # ───────────────────────────────────────────────────────────────────
+    - name: Install Docker on Debian/Ubuntu
+      apt:
+        name:
+          - docker.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install Docker on RHEL-family
+      yum:
+        name: docker
+        state: present
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Ensure Docker Desktop is installed on macOS
+      stat:
+        path: /Applications/Docker.app
+      register: docker_app
+      when: ansible_facts['os_family'] == 'Darwin'
+
+    - name: Fail if Docker Desktop missing on macOS
+      fail:
+        msg: "Please install & open Docker Desktop: brew install --cask docker && open -a Docker"
+      when:
+        - ansible_facts['os_family'] == 'Darwin'
+        - not docker_app.stat.exists
+
+    - name: Start & enable Docker on Linux
+      service:
+        name: docker
+        state: started
+        enabled: true
+      when: ansible_facts['os_family'] != 'Darwin'
+
+    # ───────────────────────────────────────────────────────────────────
+    # 2. Wait for Docker to be ready (as your user)
+    # ───────────────────────────────────────────────────────────────────
+    - name: Wait for Docker engine to respond
+      become: false
+      shell: |
+        until command -v docker &>/dev/null && docker info &>/dev/null; do
+          echo "Waiting for Docker…"
+          sleep 2
+        done
+      changed_when: false
+
+    # ───────────────────────────────────────────────────────────────────
+    # 3. Download Kind binary (root)
+    # ───────────────────────────────────────────────────────────────────
+    - name: Download Kind {{ kind_version }} for {{ ansible_system }}
+      get_url:
+        url: https://kind.sigs.k8s.io/dl/{{ kind_version }}/kind-{{ ansible_system|lower }}-amd64
+        dest: "{{ kind_path }}"
+        mode: '0755'
+
+    - name: Verify Kind installation
+      command: "{{ kind_path }} version"
+      register: kind_ver
+      changed_when: false
+
+    # ───────────────────────────────────────────────────────────────────
+    # 4. Render cluster config (root)
+    # ───────────────────────────────────────────────────────────────────
+    - name: Create Kind config file
+      copy:
+        dest: "/tmp/kind-{{ cluster_name }}.yaml"
+        content: |
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          name: {{ cluster_name }}
+          nodes:
+            - role: control-plane
+              extraPortMappings:
+                - containerPort: 6443
+                  hostPort: {{ api_host_port }}
+                  listenAddress: "127.0.0.1"
+                  protocol: tcp
+
+    # ───────────────────────────────────────────────────────────────────
+    # 5. List & create cluster (as your user)
+    # ───────────────────────────────────────────────────────────────────
+    - name: List existing Kind clusters
+      become: false
+      command: "{{ kind_path }} get clusters"
+      register: clusters_out
+      changed_when: false
+
+    - name: Create Kind cluster "{{ cluster_name }}"
+      become: false
+      command: >
+        {{ kind_path }} create cluster
+        --name {{ cluster_name }}
+        --image kindest/node:{{ k8s_version }}
+        --config /tmp/kind-{{ cluster_name }}.yaml
+      when: cluster_name not in clusters_out.stdout
+
+    # ───────────────────────────────────────────────────────────────────
+    # 6. Wait for the control-plane API (root is fine)
+    # ───────────────────────────────────────────────────────────────────
+    - name: Wait for API server /healthz
+      uri:
+        url: "https://127.0.0.1:{{ api_host_port }}/healthz"
+        validate_certs: no
+        status_code: 200
+      register: health
+      retries: 12
+      delay: 5
+      until: health.status == 200
+
+    # ───────────────────────────────────────────────────────────────────
+    # 7. Show cluster nodes (as your user)
+    # ───────────────────────────────────────────────────────────────────
+    - name: Display cluster nodes
+      become: false
+      command: kubectl --context kind-{{ cluster_name }} get nodes -o wide
+      register: nodes
+      changed_when: false
+
+    - debug:
+        msg: "{{ nodes.stdout_lines }}"

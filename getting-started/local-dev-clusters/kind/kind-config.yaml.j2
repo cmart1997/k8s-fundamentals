@@ -1,0 +1,15 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: {{ cluster_name }}
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 6443
+        hostPort: {{ api_host_port }}
+        listenAddress: "127.0.0.1"
+        protocol: tcp
+kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      timeoutForControlPlane: 5m

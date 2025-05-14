@@ -1,0 +1,96 @@
+---
+- name: Install & bootstrap Minikube (all OS)
+  hosts: all               # use "localhost" or a Windows host
+  gather_facts: yes
+  vars:
+    minikube_version: "latest"          # pin "v1.35.2" if you like
+    minikube_profile: "minikube"
+    minikube_driver: "{{ (ansible_system == 'Darwin') | ternary('docker', (ansible_os_family == 'Windows') | ternary('docker', 'docker')) }}"
+    minikube_memory: 4096               # MB
+    minikube_cpus: 2
+    hello_manifest: "https://raw.githubusercontent.com/kubernetes/examples/master/staging/hello-kubernetes/hello.yaml"
+
+  tasks:
+  # ──────────────────────────────────────────────────────────────
+  # INSTALL MINIKUBE
+  # ──────────────────────────────────────────────────────────────
+  - name: macOS | Install via Homebrew
+    when: ansible_system == 'Darwin'
+    homebrew:
+      name: minikube
+      state: present
+
+  - name: Linux | Download Minikube binary
+    when: ansible_system == 'Linux'
+    get_url:
+      url: "https://storage.googleapis.com/minikube/releases/{{ minikube_version }}/minikube-linux-amd64"
+      dest: /tmp/minikube
+      mode: "0755"
+
+  - name: Linux | Install binary
+    when: ansible_system == 'Linux'
+    become: yes
+    copy:
+      src: /tmp/minikube
+      dest: /usr/local/bin/minikube
+      mode: "0755"
+
+  - name: Windows | Install via Chocolatey
+    when: ansible_os_family == 'Windows'
+    win_chocolatey:
+      name: minikube
+      state: present
+
+  # ──────────────────────────────────────────────────────────────
+  # START CLUSTER + DEPLOY DEMO (macOS / Linux)
+  # ──────────────────────────────────────────────────────────────
+  - name:  Start Minikube cluster
+    when: ansible_system != 'Windows'
+    become: "{{ ansible_system == 'Linux' }}"
+    shell: |
+      set -euo pipefail
+      minikube start -p {{ minikube_profile }} \
+          --driver={{ minikube_driver }} \
+          --memory={{ minikube_memory }} --cpus={{ minikube_cpus }}
+    args:
+      executable: /bin/bash
+
+  - name:  Deploy Hello‑Kubernetes demo
+    when: ansible_system != 'Windows'
+    shell: |
+      set -euo pipefail
+      kubectl apply -f {{ hello_manifest }}
+      kubectl rollout status deployment/hello-kubernetes
+    args:
+      executable: /bin/bash
+
+  - name:  Print service URL
+    when: ansible_system != 'Windows'
+    shell: |
+      minikube -p {{ minikube_profile }} service hello-kubernetes --url
+    args:
+      executable: /bin/bash
+    register: demo_url
+    changed_when: false
+
+  - name:  Show URL
+    when: ansible_system != 'Windows'
+    debug:
+      msg: "Hello‑Kubernetes available at {{ demo_url.stdout }}"
+
+  # ──────────────────────────────────────────────────────────────
+  # START CLUSTER + DEPLOY DEMO (Windows)
+  # ──────────────────────────────────────────────────────────────
+  - name: Windows | Start cluster & deploy demo
+    when: ansible_os_family == 'Windows'
+    win_shell: |
+      minikube start --driver=docker --memory={{ minikube_memory }} --cpus={{ minikube_cpus }}
+      kubectl apply -f {{ hello_manifest }}
+      kubectl rollout status deployment/hello-kubernetes
+      minikube service hello-kubernetes --url
+    register: win_demo
+
+  - name: Windows | Show URL
+    when: ansible_os_family == 'Windows'
+    debug:
+      msg: "Hello‑Kubernetes available at {{ win_demo.stdout_lines[-1] }}"

@@ -1,0 +1,7 @@
+# # You can override these with --extra-vars at runtime
+# cluster_name: dev
+# k8s_version: v1.30.0     # any version Kind supports
+# node_count: 1            # bump to 3 for a proper HA testbed
+# api_host_port: 6443      # avoid clashes if you run multiple clusters
+# kind_release_url: "https://kind.sigs.k8s.io/dl/{{ kind_version }}/kind-{{ ansible_system | lower }}-amd64"
+# kind_version: v0.23.0
