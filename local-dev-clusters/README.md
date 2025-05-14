@@ -230,9 +230,3 @@ Everything runs **locally** yet acts exactly like EKS, GKE, or AKS—skills tran
 
 Deploy, scale, break, and roll back—all **locally** and instantly.
 Happy hacking! ✌️
-
-```
-
-**Save this Markdown as** `00-getting-started/local-dev-clusters/README.md`, commit, and push.  
-You now have a polished, self‑contained guide matching the quality and structure of your *Containers 101* lesson.
-```
